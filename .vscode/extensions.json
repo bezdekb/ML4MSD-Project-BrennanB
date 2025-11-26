@@ -1,0 +1,10 @@
+{
+    "recommendations": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "tomoki1207.pdf",
+        "github.vscode-github-actions",
+        "janosh.matterviz",
+    ]
+}

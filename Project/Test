@@ -1,0 +1,153 @@
+# ============================================================
+# OQMD 2D Materials ML Pipeline (for uv environment)
+# ============================================================
+import pandas as pd
+import numpy as np
+import warnings
+from sklearn.metrics import mean_absolute_error
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from dscribe.descriptors import SOAP
+from ase import Atoms
+
+warnings.filterwarnings("ignore", category=SyntaxWarning)
+
+# ============================================================
+# 1. Try to query OQMD or use fallback data
+# ============================================================
+
+try:
+    from qmpy_rester import get_oqmd_structures
+    print("✅ qmpy_rester found — querying OQMD for 2D materials...")
+
+    # Example filter: 2D-like compounds with nonzero band gap
+    # (In practice, you'd use a more detailed filter like prototype or element set)
+    df = get_oqmd_structures(
+        response_fields=[
+            "chemical_formula_descriptive",
+            "elements",
+            "lattice_vectors",
+            "cartesian_site_positions",
+            "_oqmd_band_gap",
+            "_oqmd_delta_e",
+            "_oqmd_spacegroup",
+        ],
+        filter_dict={
+            "_oqmd_band_gap": {"$gt": 0},
+            # common 2D prototypes
+            "_oqmd_spacegroup": {"$in": ["P-6m2", "P63/mmc", "R-3m"]}
+        },
+    )
+
+    df = pd.DataFrame(df)
+    print(f"✅ Retrieved {len(df)} possible 2D entries from OQMD")
+
+except Exception as e:
+    print("⚠️ Could not connect to OQMD API — using mock 2D-layered demo data.")
+    print("Reason:", e)
+
+    # Fallback demo data mimicking 2D materials
+    df = pd.DataFrame([
+        {
+            "chemical_formula_descriptive": "MoS2",
+            "elements": ["Mo", "S"],
+            "lattice_vectors": [[3.18, 0, 0], [-1.59, 2.75, 0], [0, 0, 12.3]],
+            "cartesian_site_positions": [[0, 0, 0], [0.33, 0.66, 0.62], [0.66, 0.33, 0.38]],
+            "_oqmd_band_gap": 1.8,
+        },
+        {
+            "chemical_formula_descriptive": "WS2",
+            "elements": ["W", "S"],
+            "lattice_vectors": [[3.15, 0, 0], [-1.58, 2.74, 0], [0, 0, 12.5]],
+            "cartesian_site_positions": [[0, 0, 0], [0.33, 0.66, 0.62], [0.66, 0.33, 0.38]],
+            "_oqmd_band_gap": 1.9,
+        },
+        {
+            "chemical_formula_descriptive": "BN",
+            "elements": ["B", "N"],
+            "lattice_vectors": [[2.5, 0, 0], [-1.25, 2.165, 0], [0, 0, 10.2]],
+            "cartesian_site_positions": [[0, 0, 0], [0.33, 0.66, 0.5]],
+            "_oqmd_band_gap": 5.9,
+        },
+    ])
+
+# ============================================================
+# 2. Basic cleanup
+# ============================================================
+df = df.dropna(
+    subset=["_oqmd_band_gap", "cartesian_site_positions", "lattice_vectors"])
+print(f"Remaining valid 2D rows: {len(df)}")
+
+# ============================================================
+# 3. Composition-based features
+# ============================================================
+
+periodic_table = {
+    "Mo": {"Z": 42, "chi": 2.16, "r_cov": 1.54},
+    "W":  {"Z": 74, "chi": 2.36, "r_cov": 1.62},
+    "S":  {"Z": 16, "chi": 2.58, "r_cov": 1.05},
+    "B":  {"Z": 5,  "chi": 2.04, "r_cov": 0.85},
+    "N":  {"Z": 7,  "chi": 3.04, "r_cov": 0.71},
+}
+
+
+def comp_feats(elements):
+    """Mean atomic number, electronegativity, covalent radius."""
+    props = {"Z": [], "chi": [], "r_cov": []}
+    for e in elements:
+        if e in periodic_table:
+            for key in props:
+                props[key].append(periodic_table[e][key])
+    return [np.mean(props[k]) if props[k] else 0 for k in props]
+
+
+df["comp_feats"] = df["elements"].apply(comp_feats)
+Xc = np.vstack(df["comp_feats"].to_numpy())
+
+# ============================================================
+# 4. Structure-based features (SOAP)
+# ============================================================
+
+species_all = list({e for sub in df["elements"] for e in sub})
+soap = SOAP(
+    species=species_all,
+    r_cut=5.0,
+    n_max=4,
+    l_max=3,
+    sparse=False
+)
+
+
+def make_atoms(row):
+    """Reconstruct ASE Atoms from lattice and positions."""
+    lat = np.array(row["lattice_vectors"])
+    pos = np.array(row["cartesian_site_positions"]) * np.linalg.norm(lat[0])
+    elems = row["elements"]
+    return Atoms(symbols=elems, positions=pos, cell=lat, pbc=True)
+
+
+df["atoms"] = df.apply(make_atoms, axis=1)
+Xsoap = np.vstack([soap.create(a).mean(axis=0) for a in df["atoms"]])
+
+# ============================================================
+# 5. Combine and train ML model
+# ============================================================
+
+X = np.hstack([Xc, Xsoap])
+y = df["_oqmd_band_gap"].to_numpy()
+
+Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25, random_state=42)
+rf = RandomForestRegressor(n_estimators=400, random_state=0, n_jobs=-1)
+rf.fit(Xtr, ytr)
+pred = rf.predict(Xte)
+
+mae = mean_absolute_error(yte, pred)
+print(f"✅ RandomForest (2D materials) MAE = {mae:.3f} eV")
+
+# ============================================================
+# 6. Show predictions
+# ============================================================
+
+print("\nSample predictions:")
+for formula, true, pr in zip(df["chemical_formula_descriptive"], y, rf.predict(X)):
+    print(f"{formula:>6s}  | True: {true:6.2f}  Pred: {pr:6.2f}")

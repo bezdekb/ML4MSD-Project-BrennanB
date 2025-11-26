@@ -11,3 +11,8 @@ dependencies = [
     "pandas>=2.3.2",
     "pymatgen>=2025.6.14",
 ]
+
+[tool.uv.workspace]
+members = [
+    "oqmd-ml",
+]
