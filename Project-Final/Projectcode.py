@@ -32,7 +32,6 @@ def fetch_page(resource, params):
 
 
 max_records = 8000
-
 # Tutorial pulls from formationenergy then queries
 
 
@@ -96,8 +95,9 @@ def string_to_structure(sites, unit_cell):
         if not species:
             return None
 
-        structure = Structure(lattice, species, coords,
-                              coords_are_cartesian=False)
+        structure = Structure(
+            lattice, species, coords, coords_are_cartesian=False
+        )
         return structure
     except Exception:
         return None
@@ -113,7 +113,7 @@ def material2d(formula):
     }  # Transition metals
     ch = {"S", "Se", "Te"}  # Chalcogens
 
-# Checking if these are present
+    # Checking if these are present
     try:
         composition = Composition(formula)
         elements = {el.symbol for el in composition.elements}
@@ -200,7 +200,8 @@ def add_features(df_clean):
 
     composition_series = df_clean["formula"].apply(composition_stats)
     composition_df = pd.DataFrame(
-        composition_series.tolist(), index=df_clean.index)
+        composition_series.tolist(), index=df_clean.index
+    )
 
     struct_series = df_clean["structure"].apply(structural_features)
     struct_df = pd.DataFrame(struct_series.tolist(), index=df_clean.index)
@@ -208,6 +209,17 @@ def add_features(df_clean):
     df_featurized = pd.concat([df_clean, composition_df, struct_df], axis=1)
     print(f"Dataframe: {df_featurized.shape}")
     return df_featurized
+
+
+def mape(y_true, y_pred, eps=1e-6):
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+    mask = np.abs(y_true) > eps
+    if mask.sum() == 0:
+        return np.nan
+    y_true = y_true[mask]
+    y_pred = y_pred[mask]
+    return np.mean(np.abs((y_true - y_pred) / y_true)) * 100.0
 
 
 def train_and_evaluate(df_featurized):
@@ -243,7 +255,8 @@ def train_and_evaluate(df_featurized):
 
     mean_train = y_train.mean()
     baseline_mae = mean_absolute_error(
-        y_val, np.full_like(y_val, fill_value=mean_train))
+        y_val, np.full_like(y_val, fill_value=mean_train)
+    )
     print(f"Step 5: Predict Baseline MAE = {baseline_mae:.3f} eV")
 
     # RandomForest model
@@ -266,10 +279,21 @@ def train_and_evaluate(df_featurized):
     r2_val = r2_score(y_val, y_val_pred)
     r2_test = r2_score(y_test, y_test_pred)
 
+    # MAPE using your existing variables
+    mape_train = mape(y_train, y_train_pred)
+    mape_val = mape(y_val, y_val_pred)
+    mape_test = mape(y_test, y_test_pred)
+
     print("Performance Results")
-    print(f"Train: MAE={mae_train:.4f}, R2={r2_train:.4f}")
-    print(f"Val:   MAE={mae_val:.4f}, R2={r2_val:.4f}")
-    print(f"Test:  MAE={mae_test:.4f}, R2={r2_test:.4f}")
+    print(
+        f"Train: MAE={mae_train:.4f}, R2={r2_train:.4f}, MAPE={mape_train:.2f}%"
+    )
+    print(
+        f"Val:   MAE={mae_val:.4f}, R2={r2_val:.4f}, MAPE={mape_val:.2f}%"
+    )
+    print(
+        f"Test:  MAE={mae_test:.4f}, R2={r2_test:.4f}, MAPE={mape_test:.2f}%"
+    )
 
     # Parity plots
     def parity_plot(y_true, y_pred, title):
@@ -285,15 +309,21 @@ def train_and_evaluate(df_featurized):
         plt.show()
 
     print("Step 6: Plotting")
-    parity_plot(y_train, y_train_pred,
-                f"Train (MAE={mae_train:.4f}, R2={r2_train:.4f})")
-    parity_plot(y_val,   y_val_pred,
-                f"Val (MAE={mae_val:.4f}, R2={r2_val:.4f})")
-    parity_plot(y_test,  y_test_pred,
-                f"Test (MAE={mae_test:.4f}, R2={r2_test:.4f})")
+    parity_plot(
+        y_train, y_train_pred,
+        f"Train (MAE={mae_train:.4f}, R2={r2_train:.4f})"
+    )
+    parity_plot(
+        y_val, y_val_pred,
+        f"Val (MAE={mae_val:.4f}, R2={r2_val:.4f})"
+    )
+    parity_plot(
+        y_test, y_test_pred,
+        f"Test (MAE={mae_test:.4f}, R2={r2_test:.4f})"
+    )
 
 
-def save_features(df_featurized, filename="2d_materials.csv"):
+def save_features(df_featurized, filename="2d_materials_1.csv"):
     cols = [
         "entry_id", "formula", "band_gap",
         "avg_atomic_number", "avg_atomic_mass", "ntypes",
